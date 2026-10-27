@@ -1,0 +1,148 @@
+---
+title: "tscv_in_R"
+format: html
+editor: visual
+---
+
+Install needed libraries. More specifically, the fable package since that will include the models we will use, and the fable table output that we get.
+
+```{r}
+library(tsibble)
+library(fable)
+library(tidyverse)
+library(knitr)
+library(tsibbledata)
+library(glue)
+```
+
+Here, we set our horizon to 4. So we want to forecast 4 months into the future. INIT is our training window of 240 months or 20 years.
+
+```{r}
+# Maximum number of forecast horizons
+H <- 4
+# First origin: 20 years of monthly data
+INIT <- 240
+
+# Filter for the specific series: Victoria restaurant sales
+cafes <- aus_retail |>
+  filter(
+    State == "Victoria",
+    Industry == "Cafes, restaurants and catering services"
+  )
+
+head(cafes)
+```
+
+Lets see the whole time series length in both months and years.
+
+```{r}
+total_months <- select(cafes, Month) |> nrow()
+total_years <- total_months / 12 
+cat(glue("Total months in dataset: {total_months}"))
+cat(glue("Total years covered: {total_years}"))
+
+cat(glue("Here is our training size percentage: "))
+cat(glue("Training: {INIT}"))
+cat(glue("RATIO: {INIT} / {total_months} = %{INIT / total_months}"))
+```
+
+Lets create the expanding window tsibble. It will return to us each window as a row entry in the resulting table.
+
+```{r}
+origins_expand <- cafes |>
+  stretch_tsibble(.init = INIT, .step = 1)
+
+
+head(origins_expand)
+```
+
+Lets compare the difference in column names now. The .id represents what window that month belongs to (.id is a key). The window was defined in INIT.
+
+```{r}
+cat(glue("{colnames(cafes)}"))
+cat(glue("{colnames(origins_expand)}"))
+```
+
+Lets use the four benchmark models on EACH window.
+
+MEAN - mean model SNAIVE - Seasonal naïve method RW - Random walk with drift (often just “the drift method”) TSLM - Time series linear model, a linear regression
+
+Each one of these will produce a forecast for each window for horizon months 1, 2, 3, and 4 into the future.
+
+```{r}
+tscv_expand_fc <- origins_expand |>
+  model(mean = MEAN(Turnover),
+        snaive = SNAIVE(Turnover),
+        drift = RW(Turnover ~ drift()),
+        tslm = TSLM(Turnover ~ trend() + season())) |>
+  forecast(h = H) |>
+  filter(Month <= max(cafes$Month)) |>
+  group_by(.id, .model) |> mutate(h = row_number()) |> ungroup() |>
+  as_fable(response = "Turnover", distribution = Turnover)
+
+head(tscv_expand_fc)
+```
+
+We want an actual fable. So we transform this table into what we need.
+
+The steps:
+
+1.  For each forecast, compute the error: actual − forecast.
+2.  Take the absolute value, so overestimates and underestimates both count as positive.
+3.  Average those absolute errors for each model and each horizon, pooling across all the windows.
+
+```{r}
+
+# USES MEAN ABSOLUTE ERROR
+
+acc_expand <- tscv_expand_fc |>
+  accuracy(cafes, by = c("h", ".model")) |>
+  select(h, .model, MAE) |>
+  pivot_wider(names_from = .model, values_from = c(MAE)) #|>
+  #kable(digits = 2, caption = "MAE by Model and Horizon")
+
+head(acc_expand)
+
+```
+
+So this uses MAE ("Mean absolute error"). It looks at the forecast made for each model, then the actual observed value. It takes the \|observed - forecast\| and then sums up that value at each window and divides by total windows. This just gives you the average at each horizon for each model.
+
+# MAE = (sum of \|observed − forecast\| over all windows) ÷ (number of forecasts)
+
+Lets plot how each model did.
+
+```{r}
+library(ggplot2)
+
+fc_h1 <- tscv_expand_fc |>
+  filter(h == 1) |>
+  as_tibble()
+
+ggplot() +
+  geom_line(data = cafes, aes(x = Month, y = Turnover),
+            colour = "black", linewidth = 0.8) +
+  geom_line(data = fc_h1, aes(x = Month, y = .mean, colour = .model)) +
+  labs(x = "Month", y = "Turnover ($M AUD)", colour = "Model",
+       title = "1-month-ahead forecasts vs actual turnover")
+```
+
+```{r}
+
+ggplot() +
+  geom_line(data = cafes |> filter(Month >= min(fc_h1$Month)),
+            aes(x = Month, y = Turnover), colour = "black", linewidth = 0.8) +
+  geom_line(data = fc_h1, aes(x = Month, y = .mean, colour = .model)) +
+  labs(x = "Month", y = "Turnover ($M AUD)", colour = "Model")
+
+```
+
+Now lets try a sliding/rolling window. This difference here is that it discards old information when making the calculation.
+
+-   Expanding window (stretch_tsibble()): starts at the first observation every time, so each training set includes all data up to the forecast origin.
+
+-   Rolling window (slide_tsibble()): fixed length, say 240 months. Each time a new month is added, the oldest one drops out.
+
+```{r}
+
+
+```
