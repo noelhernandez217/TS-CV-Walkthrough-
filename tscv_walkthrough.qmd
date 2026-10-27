@@ -171,6 +171,60 @@ head(tscv_rolling_fc)
 
 ```
 
+Lets get the same MAE data we did before, but now on the rolling window instead. 
+
+```{r}
+
+# USES MEAN ABSOLUTE ERROR
+
+acc_rolling <- tscv_rolling_fc |>
+  accuracy(cafes, by = c("h", ".model")) |>
+  select(h, .model, MAE) |>
+  pivot_wider(names_from = .model, values_from = c(MAE)) #|>
+  #kable(digits = 2, caption = "MAE by Model and Horizon")
+
+head(acc_rolling)
+
+
+```
+In general, the rolling window does a lot better. The most obvious example is the differences in the MAE of the mean models. Lets compare. 
+
+```{r}
+
+expanding_mean <- acc_expand  |> select(h, expanding = mean)
+rolling_mean   <- acc_rolling |> select(h, rolling = mean)
+
+compare_means <- inner_join(expanding_mean, rolling_mean, by = "h")
+compare_means
+
+```
+Lets just see the differences between all of the model errors for both expanding and rolling. 
+
+```{r}
+compare_model_errors <- inner_join(acc_expand, acc_rolling, by = "h",
+                                   suffix = c("_expanding", "_rolling")) 
+
+compare_model_errors
+```
+Lets take the differences and we can get a better idea since theres a lot going on in the table above. Not as easily readable. 
+
+```{r}
+
+diff_errors <- inner_join(
+  acc_expand  |> pivot_longer(-h, names_to = "model", values_to = "expanding"),
+  acc_rolling |> pivot_longer(-h, names_to = "model", values_to = "rolling"),
+  by = c("h", "model")
+) |>
+  mutate(diff = rolling - expanding) |> # do rolling - expanding here! rolling has the lower error
+  select(h, model, diff) |>
+  pivot_wider(names_from = model, values_from = diff)
+
+diff_errors
+```
+Negative means the rolling window had lower error which means better forecasting accuracy. Positive means the expanding window did better.The SNAIVE model had a difference of zero? So they the performance is the same regardless of whether or not its rolling or expanding? 
+
+
+
 
 
 
