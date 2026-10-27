@@ -143,6 +143,35 @@ Now lets try a sliding/rolling window. This difference here is that it discards 
 -   Rolling window (slide_tsibble()): fixed length, say 240 months. Each time a new month is added, the oldest one drops out.
 
 ```{r}
+H <- 4 # same horizon
+WIN <- 240 # our window size
 
+origins_roll <- cafes |>
+  slide_tsibble(.size = WIN, .step = 1)
+
+head(origins_roll)
 
 ```
+
+Same steps as before for setting up the fable. Does identical work. Just using rolling window instead. 
+
+```{r}
+
+tscv_rolling_fc <- origins_roll |>
+  model(mean = MEAN(Turnover),
+        snaive = SNAIVE(Turnover),
+        drift = RW(Turnover ~ drift()),
+        tslm = TSLM(Turnover ~ trend() + season())) |>
+  forecast(h = H) |>
+  filter(Month <= max(cafes$Month)) |>
+  group_by(.id, .model) |> mutate(h = row_number()) |> ungroup() |>
+  as_fable(response = "Turnover", distribution = Turnover)
+
+head(tscv_rolling_fc)
+
+```
+
+
+
+
+
